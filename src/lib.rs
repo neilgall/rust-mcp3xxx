@@ -4,6 +4,7 @@ use rustpi_io::*;
 use rustpi_io::gpio::*;
 use rustpi_io::serial::Device;
 use std::io::*;
+use std::str::FromStr;
 
 pub enum MCPDeviceType {
 	MCP3008,
@@ -19,6 +20,25 @@ pub struct MCPDevice {
 pub struct AnalogIn {
 	pin: u8,
 	command: u8
+}
+
+pub fn device_from_str(s: &str) -> Result<rustpi_io::serial::Device> {
+	match s {
+		"CE0" => Ok(rustpi_io::serial::Device::CE0),
+		"CE1" => Ok(rustpi_io::serial::Device::CE1),
+		_ => Err(Error::new(ErrorKind::NotFound, "unknown device"))
+	}
+}
+
+impl FromStr for MCPDeviceType {
+	type Err = Error;
+	fn from_str(s: &str) -> Result<Self> {
+		match s {
+			"MCP3004" => Ok(MCPDeviceType::MCP3004),
+			"MCP3008" => Ok(MCPDeviceType::MCP3008),
+			_ => Err(Error::new(ErrorKind::NotFound, "unknown device type"))
+		}
+	}
 }
 
 impl MCPDevice {
