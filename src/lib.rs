@@ -4,6 +4,8 @@ use rustpi_io::*;
 use rustpi_io::gpio::*;
 use rustpi_io::serial::Device;
 use std::io::*;
+use std::cell::RefCell;
+use std::rc::Rc;
 use std::str::FromStr;
 
 pub enum MCPDeviceType {
@@ -17,7 +19,10 @@ pub struct MCPDevice {
 	chip_select: GPIO
 }
 
+pub type SharedMCPDevice = Rc<RefCell<MCPDevice>>;
+
 pub struct AnalogIn {
+	mcp: SharedMCPDevice,
 	pin: u8,
 	command: u8
 }
@@ -53,7 +58,7 @@ impl MCPDevice {
 		return Ok(MCPDevice { dev, mcp_type, chip_select });
 	}
 
-	fn validate_pin(&self, pin: u8) -> Result<()> {
+	pub fn validate_pin(&self, pin: u8) -> Result<()> {
 		let max_pin = match &self.mcp_type {
 			MCPDeviceType::MCP3004 => 3,
 			MCPDeviceType::MCP3008 => 7
@@ -88,25 +93,33 @@ impl MCPDevice {
 		}
 	}
 
-	pub fn single_analog_in(&self, pin: u8) -> Result<AnalogIn> {
-		self.validate_pin(pin)?;
-		Ok(AnalogIn { pin, command: 0x03 })
+	pub fn share(self) -> SharedMCPDevice {
+		Rc::new(RefCell::new(self))
+	}
+}
+
+impl AnalogIn {
+	pub fn single(mcp: Rc<RefCell<MCPDevice>>, pin: u8) -> Result<Self> {
+		mcp.borrow().validate_pin(pin)?;
+		Ok(AnalogIn { mcp: mcp.clone(), pin, command: 0x03 })
 	}
 
-	pub fn differential_analog_in(&self, pin: u8, neg_pin: u8) -> Result<AnalogIn> {
-		let pin = self.differential_channel(pin, neg_pin)?;
-		Ok(AnalogIn { pin, command: 0x02 })
+	pub fn differential(mcp: Rc<RefCell<MCPDevice>>, pin: u8, neg_pin: u8) -> Result<AnalogIn> {
+		let pin = mcp.borrow().differential_channel(pin, neg_pin)?;
+		Ok(AnalogIn { mcp: mcp.clone(), pin, command: 0x02 })
 	}
 
-	pub fn read_value(&mut self, channel: &AnalogIn) -> Result<u16> {
-		let command = (channel.command << 6) | (channel.pin << 3);
+	pub fn read_value(&self) -> Result<u16> {
+		let command = (self.command << 6) | (self.pin << 3);
 		let out_buf: [u8; 3] = [command, 0, 0];
 		let mut in_buf: [u8; 3] = [0, 0, 0];
 
-		self.chip_select.set(GPIOData::Low)?;
-		self.dev.write(&out_buf)?;
-		self.dev.read(&mut in_buf)?;
-		self.chip_select.set(GPIOData::High)?;
+		let mut mcp = self.mcp.borrow_mut();
+
+		mcp.chip_select.set(GPIOData::Low)?;
+		mcp.dev.write(&out_buf)?;
+		mcp.dev.read(&mut in_buf)?;
+		mcp.chip_select.set(GPIOData::High)?;
 
 		let value = (((in_buf[0] & 0x01) as u16) << 9)
 					| ((in_buf[1] as u16) << 1)
@@ -114,8 +127,8 @@ impl MCPDevice {
 		Ok(value)
 	}
 
-	pub fn read_voltage(&mut self, channel: &AnalogIn) -> Result<f64> {
-		let value = self.read_value(&channel)?;
+	pub fn read_voltage(&mut self) -> Result<f64> {
+		let value = self.read_value()?;
 		Ok((value as f64 * 3.3) / 65535.0)
 	}
 }
